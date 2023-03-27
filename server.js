@@ -1,3 +1,6 @@
+// Add these lines at the top of your server.js file
+const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
 const express = require('express');
 const app = express();
 const server = require('http').createServer(app);
@@ -28,13 +31,13 @@ const typingUsers = {};
 io.on('connection', (socket) => {
   console.log('Client connected: ' + socket.id);
 
-  // Handle user registration
-  socket.on('register_user', (user) => {
-    if (typeof user === 'string' && user.length <= 30) {
-      users[socket.id] = user;
-      console.log('User registered:', user);
-    }
-  });
+// Handle user registration
+socket.on('register_user', (user) => {
+  if (typeof user === 'string' && user.length <= 30) {
+    users[socket.id] = { username: user, lastActivity: Date.now() };
+    console.log('User registered:', user);
+  }
+});
 
   // Join chat room
   socket.on('join_room', (room) => {
@@ -45,53 +48,32 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Leave chat room
-  socket.on('leave_room', (room) => {
-    if (typeof room === 'string' && room.length <= 30) {
-      socket.leave(room);
-      console.log('User', users[socket.id], 'left room', room);
-      io.to(room).emit('update_users', getUsersInRoom(room)); // Emit the updated user list
-    }
-  });
-
- // Send messages to chat room
-socket.on('send_message', throttle((data) => {
-  const { room, message } = data;
-  if (
-    typeof room === 'string' &&
-    room.length <= 30 &&
-    typeof message === 'string' &&
-    message.length <= 500
-  ) {
-    io.to(room).emit('receive_message', { user: users[socket.id], message });
+ // Leave chat room and remove user from onlineUsers
+ socket.on('leave_room', (room) => {
+  if (typeof room === 'string' && room.length <= 30) {
+    socket.leave(room);
+    console.log('User', users[socket.id], 'left room', room);
+    delete users[socket.id]; // Remove user from onlineUsers
+    io.to(room).emit('update_users', getUsersInRoom(room)); // Emit the updated user list
   }
-}, 1000)); // Throttle messages to 1 per second
+});
 
-
-    // User typing
-    socket.on('user_typing', (user) => {
-    if (typeof user === 'string' && user.length <= 30) {
-    const room = Object.keys(socket.rooms).find((r) => r !== socket.id);
-    if (!typingUsers[room]) {
-    typingUsers[room] = [];
+// Send messages to chat room
+socket.on(
+  'send_message',
+  throttle((data) => {
+    const { room, message } = data;
+    if (
+      typeof room === 'string' &&
+      room.length <= 30 &&
+      typeof message === 'string' &&
+      message.length <= 500
+    ) {
+      users[socket.id].lastActivity = Date.now();
+      io.to(room).emit('receive_message', { user: users[socket.id].username, message });
     }
-    if (!typingUsers[room].includes(user)) {
-    typingUsers[room].push(user);
-    io.to(room).emit('user_typing', user);
-    }
-    }
-    });
-    
-    // User stopped typing
-    socket.on('user_stop_typing', (user) => {
-    if (typeof user === 'string' && user.length <= 30) {
-    const room = Object.keys(socket.rooms).find((r) => r !== socket.id);
-    if (typingUsers[room]) {
-    typingUsers[room] = typingUsers[room].filter((u) => u !== user);
-    io.to(room).emit('user_stop_typing', user);
-    }
-    }
-    });
+  }, 1000)
+); // Throttle messages to 1 per second
     
     socket.on('disconnect', () => {
     console.log('Client disconnected: ' + socket.id);
@@ -100,6 +82,24 @@ socket.on('send_message', throttle((data) => {
 delete users[socket.id];
 });
 });
+
+// Add this function to server.js
+function disconnectInactiveUsers() {
+  const now = Date.now();
+  Object.keys(users).forEach((socketId) => {
+    const user = users[socketId];
+    if (now - user.lastActivity > INACTIVITY_TIMEOUT) {
+      const socket = io.sockets.sockets.get(socketId);
+      if (socket) {
+        console.log('Disconnecting inactive user:', user.username);
+        socket.disconnect(); // Disconnect the inactive user
+      }
+    }
+  });
+}
+
+// Call disconnectInactiveUsers() every minute
+setInterval(disconnectInactiveUsers, 60 * 1000);
 
 function getUsersInRoom(room) {
 const clientsInRoom = io.sockets.adapter.rooms.get(room);
