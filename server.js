@@ -78,8 +78,17 @@ socket.on(
     socket.on('disconnect', () => {
     console.log('Client disconnected: ' + socket.id);
 
-    // Remove user presence data
-delete users[socket.id];
+   // Find the room the user was in
+  const rooms = Array.from(socket.rooms);
+  const room = rooms.find((r) => r !== socket.id);
+
+  // Remove user presence data
+  delete users[socket.id];
+
+  // Update the online users and count in the corresponding room
+  if (room) {
+    io.to(room).emit('update_users', getUsersInRoom(room));
+  }
 });
 });
 
