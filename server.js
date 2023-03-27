@@ -1,5 +1,9 @@
+require('dotenv').config();
+
 // Add these lines at the top of your server.js file
 const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
+const { supabase } = require('./supabase');
 
 const express = require('express');
 const app = express();
@@ -40,13 +44,18 @@ socket.on('register_user', (user) => {
 });
 
   // Join chat room
-  socket.on('join_room', (room) => {
+  socket.on('join_room', async (room) => {
     if (typeof room === 'string' && room.length <= 30) {
       socket.join(room);
       console.log('User', users[socket.id], 'joined room', room);
-      io.to(room).emit('update_users', getUsersInRoom(room)); // Emit the updated user list
+      io.to(room).emit('update_users', getUsersInRoom(room));
+  
+      // Send the last 15 messages to the user
+      const messages = await getLastMessages(room);
+      socket.emit('last_messages', messages);
     }
   });
+  
 
  // Leave chat room and remove user from onlineUsers
  socket.on('leave_room', (room) => {
@@ -61,7 +70,7 @@ socket.on('register_user', (user) => {
 // Send messages to chat room
 socket.on(
   'send_message',
-  throttle((data) => {
+  throttle(async (data) => {
     const { room, message } = data;
     if (
       typeof room === 'string' &&
@@ -70,10 +79,25 @@ socket.on(
       message.length <= 500
     ) {
       users[socket.id].lastActivity = Date.now();
+
+      // Save the message to Supabase
+      const { error } = await supabase.from('messages').insert([
+        {
+          room,
+          user: users[socket.id].username,
+          text: message,
+        },
+      ]);
+      if (error) {
+        console.error('Error saving message to Supabase:', error);
+        return;
+      }
+
       io.to(room).emit('receive_message', { user: users[socket.id].username, message });
     }
   }, 1000)
-); // Throttle messages to 1 per second
+);
+ // Throttle messages to 1 per second
     
     socket.on('disconnect', () => {
     console.log('Client disconnected: ' + socket.id);
@@ -120,6 +144,21 @@ usersInRoom[socketId] = users[socketId];
 }
 return usersInRoom;
 }
+
+async function getLastMessages(room) {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('room', room)
+    .order('created_at', { ascending: false })
+    .limit(15);
+  if (error) {
+    console.error('Error fetching messages:', error);
+    return [];
+  }
+  return data.reverse(); // Return messages in ascending order
+}
+
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
