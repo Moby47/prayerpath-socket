@@ -27,12 +27,14 @@ io.on('connection', (socket) => {
   socket.on('join_room', (room) => {
     socket.join(room);
     console.log('User', users[socket.id], 'joined room', room);
+    io.to(room).emit('update_users', getUsersInRoom(room)); // Emit the updated user list
   });
 
   // Leave chat room
   socket.on('leave_room', (room) => {
     socket.leave(room);
     console.log('User', users[socket.id], 'left room', room);
+    io.to(room).emit('update_users', getUsersInRoom(room)); // Emit the updated user list
   });
 
   // Send messages to chat room
@@ -48,6 +50,17 @@ io.on('connection', (socket) => {
     delete users[socket.id];
   });
 });
+
+function getUsersInRoom(room) {
+  const clientsInRoom = io.sockets.adapter.rooms.get(room);
+  const usersInRoom = {};
+  if (clientsInRoom) {
+    clientsInRoom.forEach((socketId) => {
+      usersInRoom[socketId] = users[socketId];
+    });
+  }
+  return usersInRoom;
+}
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
