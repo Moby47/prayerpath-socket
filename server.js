@@ -72,32 +72,67 @@ socket.on(
   'send_message',
   throttle(async (data) => {
     const { room, message } = data;
+
+    if (!users[socket.id]) {
+      console.error('User not found:', socket.id);
+      return;
+    }
+
     if (
       typeof room === 'string' &&
       room.length <= 30 &&
       typeof message === 'string' &&
       message.length <= 500
     ) {
-      users[socket.id].lastActivity = Date.now();
+      try {
+        users[socket.id].lastActivity = Date.now();
 
-      // Save the message to Supabase
-      const { error } = await supabase.from('messages').insert([
-        {
-          room,
-          user: users[socket.id].username,
-          text: message,
-        },
-      ]);
-      if (error) {
-        console.error('Error saving message to Supabase:', error);
-        return;
+        // Save the message to Supabase
+        const { error } = await supabase.from('messages').insert([
+          {
+            room,
+            user: users[socket.id].username,
+            text: message,
+          },
+        ]);
+        if (error) {
+          console.error('Error saving message to Supabase:', error);
+          return;
+        }
+
+        io.to(room).emit('receive_message', { user: users[socket.id].username, message });
+      } catch (error) {
+        console.error('Error in send_message event:', error);
       }
-
-      io.to(room).emit('receive_message', { user: users[socket.id].username, message });
     }
   }, 1000)
 );
+
  // Throttle messages to 1 per second
+
+ //delete message
+ socket.on('delete_room', async (roomName) => {
+  try {
+    console.log(`Room to delete ${roomName}`);
+
+    // Delete the messages associated with the roomName from Supabase
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .eq('room', roomName);
+
+    if (error) {
+      console.error('Error deleting messages in Supabase:', error);
+      return;
+    }
+
+    console.log(`Messages in room ${roomName} deleted from DB.`);
+  } catch (error) {
+    console.error('Error handling delete_room event:', error);
+  }
+});
+
+ //delete message
     
     socket.on('disconnect', () => {
     console.log('Client disconnected: ' + socket.id);
@@ -145,7 +180,7 @@ usersInRoom[socketId] = users[socketId];
 return usersInRoom;
 }
 
-async function getLastMessages(room) {
+async function getLastMessages(room) {//
   const { data, error } = await supabase
     .from('messages')
     .select('*')
